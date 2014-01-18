@@ -2,6 +2,7 @@
 #include <CoreFoundation/CoreFoundation.h>
 #include <CoreServices/CoreServices.h>
 #include <signal.h>
+#include "compat.h"
 
 #if PY_VERSION_HEX < 0x02050000 && !defined(PY_SSIZE_T_MIN)
 typedef int Py_ssize_t;
@@ -9,31 +10,50 @@ typedef int Py_ssize_t;
 #define PY_SSIZE_T_MIN INT_MIN
 #endif
 
+#if PY_MAJOR_VERSION >= 3
+  #define MOD_ERROR_VAL NULL
+  #define MOD_SUCCESS_VAL(val) val
+  #define MOD_INIT(name) PyMODINIT_FUNC PyInit_##name(void)
+  #define MOD_DEF(ob, name, doc, methods) \
+          static struct PyModuleDef moduledef = { \
+            PyModuleDef_HEAD_INIT, name, doc, -1, methods, }; \
+          ob = PyModule_Create(&moduledef);
+#else
+  #define MOD_ERROR_VAL
+  #define MOD_SUCCESS_VAL(val)
+  #define MOD_INIT(name) void init##name(void)
+  #define MOD_DEF(ob, name, doc, methods) \
+          ob = Py_InitModule3(name, methods, doc);
+#endif
+
 const char callback_error_msg[] = "Unable to call callback function.";
 
-PyObject* loops = NULL;
-PyObject* streams = NULL;
+PyObject *loops = NULL;
+PyObject *streams = NULL;
 
 typedef struct {
-    PyObject* callback;
+    PyObject *callback;
     FSEventStreamRef stream;
     CFRunLoopRef loop;
-    PyThreadState* state;
+    PyThreadState *state;
 } FSEventStreamInfo;
 
-static void handler(FSEventStreamRef stream,
-                    FSEventStreamInfo* info,
-                    int numEvents,
-                    const char *const eventPaths[],
-                    const FSEventStreamEventFlags *eventMasks,
-                    const uint64_t *eventIDs) {
+static void
+handler(FSEventStreamRef stream,
+        FSEventStreamInfo *info,
+        size_t numEvents,
+        const char *const eventPaths[],
+        const FSEventStreamEventFlags *eventMasks,
+        const uint64_t *eventIDs)
+{
 
-    PyEval_AcquireLock();
+    assert(numEvents <= PY_SSIZE_T_MAX);
 
-    PyThreadState *_save;
-    _save = PyThreadState_Swap(info->state);
+    PyGILState_STATE gil_state = PyGILState_Ensure();
+    PyThreadState *thread_state = PyEval_SaveThread();
+    PyEval_RestoreThread(info->state);
 
-    /* convert event data to Python objects */
+    /* Convert event data to Python objects */
     PyObject *eventPathList = PyList_New(numEvents);
     PyObject *eventMaskList = PyList_New(numEvents);
     if ((!eventPathList) || (!eventMaskList))
@@ -41,8 +61,14 @@ static void handler(FSEventStreamRef stream,
 
     int i;
     for (i = 0; i < numEvents; i++) {
-        PyObject *str = PyString_FromString(eventPaths[i]);
-        PyObject *num = PyInt_FromLong(eventMasks[i]);
+        PyObject *str = PyBytes_FromString(eventPaths[i]);
+
+        #if PY_MAJOR_VERSION >= 3
+            PyObject *num = PyLong_FromLong(eventMasks[i]);
+        #else
+            PyObject *num = PyInt_FromLong(eventMasks[i]);
+        #endif
+
         if ((!num) || (!str)) {
             Py_DECREF(eventPathList);
             Py_DECREF(eventMaskList);
@@ -54,174 +80,185 @@ static void handler(FSEventStreamRef stream,
 
     if (PyObject_CallFunction(info->callback, "OO", eventPathList,
                               eventMaskList) == NULL) {
-        /* may can return NULL if an exception is raised */
+        /* May can return NULL if an exception is raised */
         if (!PyErr_Occurred())
             PyErr_SetString(PyExc_ValueError, callback_error_msg);
 
-        /* stop listening */
+        /* Stop listening */
         CFRunLoopStop(info->loop);
     }
 
-    PyThreadState_Swap(_save);
-    PyEval_ReleaseLock();
+    PyThreadState_Swap(thread_state);
+    PyGILState_Release(gil_state);
 }
 
-static PyObject* pyfsevents_loop(PyObject* self, PyObject* args) {
-    PyObject* thread;
+static PyObject *
+pyfsevents_loop(PyObject *self, PyObject *args)
+{
+    PyObject *thread;
+
     if (!PyArg_ParseTuple(args, "O:loop", &thread))
         return NULL;
 
     PyEval_InitThreads();
 
-    /* allocate info and store thread state */
-    PyObject* value = PyDict_GetItem(loops, thread);
+    /* Allocate info and store thread state */
+    PyObject *value = PyDict_GetItem(loops, thread);
 
-    if (value == NULL) {
+    if (!PyCapsule_IsValid(value, NULL)) {
         CFRunLoopRef loop = CFRunLoopGetCurrent();
-        value = PyCObject_FromVoidPtr((void*) loop, PyMem_Free);
+        value = PyCapsule_New((void *) loop, NULL, NULL);
         PyDict_SetItem(loops, thread, value);
         Py_INCREF(thread);
         Py_INCREF(value);
     }
 
-    /* no timeout, block until events */
+    /* No timeout, block until events */
     Py_BEGIN_ALLOW_THREADS;
     CFRunLoopRun();
     Py_END_ALLOW_THREADS;
 
-    /* cleanup state info data */
+    /* Cleanup state info data */
     if (PyDict_DelItem(loops, thread) == 0) {
         Py_DECREF(thread);
         Py_INCREF(value);
     }
 
-    if (PyErr_Occurred()) return NULL;
+    if (PyErr_Occurred())
+        return NULL;
 
-    Py_INCREF(Py_None);
-    return Py_None;
+    Py_RETURN_NONE;
 }
 
-static PyObject* pyfsevents_schedule(PyObject* self, PyObject* args,
-                                     PyObject *keywds) {
-    PyObject* thread;
-    PyObject* stream;
-    PyObject* paths;
-    PyObject* callback;
-    PyObject* show_file_events;
+static PyObject *
+pyfsevents_schedule(PyObject *self, PyObject *args, PyObject *kwargs)
+{
+    PyObject *thread;
+    PyObject *stream;
+    PyObject *paths;
+    PyObject *callback;
+    PyObject *file_events;
 
-    // default latency to be used.
-    double latency = 0.01; 
+    /* Default latency to be used. */
+    CFAbsoluteTime latency = 0.01; 
     
     static char *kwlist[] = {"thread", "stream", "callback", "paths", 
                              "show_file_events", "latency", NULL};
-
-    if (!PyArg_ParseTupleAndKeywords(args, keywds, "OOOOO|d:schedule", kwlist,
+ 
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "OOOOO|d:schedule", kwlist,
                                      &thread, &stream, &callback, &paths,
-                                     &show_file_events, &latency))
+                                     &file_events, &latency)) {
         return NULL;
-    
-    /* stream must not already have been scheduled */
+    }
+
+    /* Stream must not already have been scheduled */
     if (PyDict_Contains(streams, stream) == 1) {
         return NULL;
     }
 
-    /* create path array */
-    CFMutableArrayRef cfArray;
-    cfArray = CFArrayCreateMutable(kCFAllocatorDefault, 1,
-                                   &kCFTypeArrayCallBacks);
-    if (cfArray == NULL)
+    /* Create path array */
+    CFMutableArrayRef cf_array;
+    cf_array = CFArrayCreateMutable(kCFAllocatorDefault, 1,
+                                    &kCFTypeArrayCallBacks);
+    if (cf_array == NULL) {
         return NULL;
-
-    int i;
-    Py_ssize_t size = PyList_Size(paths);
-    const char* path;
-    CFStringRef cfStr;
-    for (i=0; i<size; i++) {
-        path = PyString_AS_STRING(PyList_GetItem(paths, i));
-        cfStr = CFStringCreateWithCString(kCFAllocatorDefault,
-                                          path,
-                                          kCFStringEncodingUTF8);
-        CFArraySetValueAtIndex(cfArray, i, cfStr);
-        CFRelease(cfStr);
     }
 
-    /* allocate stream info structure */
-    FSEventStreamInfo * info = PyMem_New(FSEventStreamInfo, 1);
+    Py_ssize_t i, size = PyList_Size(paths);
+    const char *path;
+    CFStringRef cf_str;
+    for (i = 0; i < size; i++) {
+        path = PyBytes_AS_STRING(PyList_GetItem(paths, i));
+        cf_str = CFStringCreateWithCString(kCFAllocatorDefault,
+                                          path,
+                                          kCFStringEncodingUTF8);
+        CFArraySetValueAtIndex(cf_array, i, cf_str);
+        CFRelease(cf_str);
+    }
 
-    /* create event stream */
-    FSEventStreamContext context = {0, (void*) info, NULL, NULL, NULL};
+    /* Allocate stream info structure */
+    FSEventStreamInfo *info = PyMem_New(FSEventStreamInfo, 1);
+
+    /* Create event stream */
+    FSEventStreamContext context = {0, (void *) info, NULL, NULL, NULL};
     FSEventStreamRef fsstream = NULL;
-    
-    UInt32 flags = kFSEventStreamCreateFlagNoDefer;
-    if(show_file_events == Py_True){
-        flags = flags | kFSEventStreamCreateFlagFileEvents;
+
+    FSEventStreamCreateFlags flags = kFSEventStreamCreateFlagNoDefer;
+    if (file_events == Py_True){
+        flags |= kFSEventStreamCreateFlagFileEvents;
     }
 
     fsstream = FSEventStreamCreate(kCFAllocatorDefault,
                                    (FSEventStreamCallback)&handler,
                                    &context,
-                                   cfArray,
+                                   cf_array,
                                    kFSEventStreamEventIdSinceNow,
                                    latency,
                                    flags);
-    CFRelease(cfArray);
+    CFRelease(cf_array);
 
-    PyObject* value = PyCObject_FromVoidPtr((void*) fsstream, PyMem_Free);
+    PyObject *value = PyCapsule_New((void *) fsstream, NULL, NULL);
     PyDict_SetItem(streams, stream, value);
 
-    /* get runloop reference from observer info data or current */
+    /* Get runloop reference from observer info data or current */
     value = PyDict_GetItem(loops, thread);
     CFRunLoopRef loop;
-    if (value == NULL) {
+    if (!PyCapsule_IsValid(value, NULL)) {
         loop = CFRunLoopGetCurrent();
     } else {
-        loop = (CFRunLoopRef) PyCObject_AsVoidPtr(value);
+        loop = (CFRunLoopRef) PyCapsule_GetPointer(value, NULL);
     }
 
     FSEventStreamScheduleWithRunLoop(fsstream, loop, kCFRunLoopDefaultMode);
 
-    /* set stream info for callback */
+    /* Set stream info for callback */
     info->callback = callback;
     info->stream = fsstream;
     info->loop = loop;
     info->state = PyThreadState_Get();
     Py_INCREF(callback);
 
-    /* start event streams */
+    /* Start event streams */
     if (!FSEventStreamStart(fsstream)) {
         FSEventStreamInvalidate(fsstream);
         FSEventStreamRelease(fsstream);
+        PyErr_SetString(PyExc_ValueError,
+                        "Could not start event stream.");
         return NULL;
     }
 
-    Py_INCREF(Py_None);
-    return Py_None;
+    Py_RETURN_NONE;
 }
 
-static PyObject* pyfsevents_unschedule(PyObject* self, PyObject* stream) {
-    PyObject* value = PyDict_GetItem(streams, stream);
+static PyObject *
+pyfsevents_unschedule(PyObject *self, PyObject *stream)
+{
+    PyObject *value = PyDict_GetItem(streams, stream);
     PyDict_DelItem(streams, stream);
-    FSEventStreamRef fsstream = PyCObject_AsVoidPtr(value);
-
-    FSEventStreamStop(fsstream);
-    FSEventStreamInvalidate(fsstream);
-    FSEventStreamRelease(fsstream);
-
-    Py_INCREF(Py_None);
-    return Py_None;
-}
-
-static PyObject* pyfsevents_stop(PyObject* self, PyObject* thread) {
-    PyObject* value = PyDict_GetItem(loops, thread);
-    CFRunLoopRef loop = PyCObject_AsVoidPtr(value);
-
-    /* stop runloop */
-    if (loop) {
-        CFRunLoopStop(loop);
+    if (PyCapsule_IsValid(value, NULL)) {
+        FSEventStreamRef fsstream = PyCapsule_GetPointer(value, NULL);
+        FSEventStreamStop(fsstream);
+        FSEventStreamInvalidate(fsstream);
+        FSEventStreamRelease(fsstream);
     }
 
-    Py_INCREF(Py_None);
-    return Py_None;
+    Py_RETURN_NONE;
+}
+
+static PyObject *
+pyfsevents_stop(PyObject* self, PyObject* thread)
+{
+    PyObject *value = PyDict_GetItem(loops, thread);
+    if (PyCapsule_IsValid(value, NULL)) {
+        CFRunLoopRef loop = PyCapsule_GetPointer(value, NULL);
+
+	    /* Stop runloop */
+	    if (loop) {
+	        CFRunLoopStop(loop);
+        }
+    }
+
+    Py_RETURN_NONE;
 }
 
 static PyMethodDef methods[] = {
@@ -229,17 +266,37 @@ static PyMethodDef methods[] = {
     {"stop", pyfsevents_stop, METH_O, NULL},
     {"schedule", (PyCFunction) pyfsevents_schedule, METH_VARARGS | METH_KEYWORDS, NULL},
     {"unschedule", pyfsevents_unschedule, METH_O, NULL},
-    {NULL, NULL, 0, NULL},
+    {NULL},
 };
 
 static char doc[] = "Low-level FSEvent interface.";
 
-PyMODINIT_FUNC init_fsevents(void) {
-    PyObject* mod = Py_InitModule3("_fsevents", methods, doc);
-    PyModule_AddIntConstant(mod, "POLLIN", kCFFileDescriptorReadCallBack);
-    PyModule_AddIntConstant(mod, "POLLOUT", kCFFileDescriptorWriteCallBack);
+MOD_INIT(_fsevents) {
+    PyObject *mod;
 
+    MOD_DEF(mod, "_fsevents", doc, methods)
+
+    if (mod == NULL)
+        return MOD_ERROR_VAL;
+
+    PyModule_AddIntConstant(mod, "CF_POLLIN", kCFFileDescriptorReadCallBack);
+    PyModule_AddIntConstant(mod, "CF_POLLOUT", kCFFileDescriptorWriteCallBack);
+    PyModule_AddIntConstant(mod, "FS_IGNORESELF", kFSEventStreamCreateFlagIgnoreSelf);
+    PyModule_AddIntConstant(mod, "FS_FILEEVENTS", kFSEventStreamCreateFlagFileEvents);
+    PyModule_AddIntConstant(mod, "FS_ITEMCREATED", kFSEventStreamEventFlagItemCreated);
+    PyModule_AddIntConstant(mod, "FS_ITEMREMOVED", kFSEventStreamEventFlagItemRemoved);
+    PyModule_AddIntConstant(mod, "FS_ITEMINODEMETAMOD", kFSEventStreamEventFlagItemInodeMetaMod);
+    PyModule_AddIntConstant(mod, "FS_ITEMRENAMED", kFSEventStreamEventFlagItemRenamed);
+    PyModule_AddIntConstant(mod, "FS_ITEMMODIFIED", kFSEventStreamEventFlagItemModified);
+    PyModule_AddIntConstant(mod, "FS_ITEMFINDERINFOMOD", kFSEventStreamEventFlagItemFinderInfoMod);
+    PyModule_AddIntConstant(mod, "FS_ITEMCHANGEOWNER", kFSEventStreamEventFlagItemChangeOwner);
+    PyModule_AddIntConstant(mod, "FS_ITEMXATTRMOD", kFSEventStreamEventFlagItemXattrMod);
+    PyModule_AddIntConstant(mod, "FS_ITEMISFILE", kFSEventStreamEventFlagItemIsFile);
+    PyModule_AddIntConstant(mod, "FS_ITEMISDIR", kFSEventStreamEventFlagItemIsDir);
+    PyModule_AddIntConstant(mod, "FS_ITEMISSYMLINK", kFSEventStreamEventFlagItemIsSymlink);
     loops = PyDict_New();
     streams = PyDict_New();
+
+    return MOD_SUCCESS_VAL(mod);
 }
 
