@@ -59,7 +59,7 @@ handler(FSEventStreamRef stream,
     if ((!eventPathList) || (!eventMaskList))
         return;
 
-    int i;
+    size_t i;
     for (i = 0; i < numEvents; i++) {
         PyObject *str = PyBytes_FromString(eventPaths[i]);
 
@@ -181,23 +181,23 @@ pyfsevents_schedule(PyObject *self, PyObject *args, PyObject *kwargs)
 
     /* Create event stream */
     FSEventStreamContext context = {0, (void *) info, NULL, NULL, NULL};
-    FSEventStreamRef fsstream = NULL;
+    FSEventStreamRef fsevent_stream = NULL;
 
     FSEventStreamCreateFlags flags = kFSEventStreamCreateFlagNoDefer;
     if (file_events == Py_True){
         flags |= kFSEventStreamCreateFlagFileEvents;
     }
 
-    fsstream = FSEventStreamCreate(kCFAllocatorDefault,
-                                   (FSEventStreamCallback)&handler,
-                                   &context,
-                                   cf_array,
-                                   kFSEventStreamEventIdSinceNow,
-                                   latency,
-                                   flags);
+    fsevent_stream = FSEventStreamCreate(kCFAllocatorDefault,
+                                        (FSEventStreamCallback)&handler,
+                                         &context,
+                                         cf_array,
+                                         kFSEventStreamEventIdSinceNow,
+                                         latency,
+                                         flags);
     CFRelease(cf_array);
 
-    PyObject *value = PyCapsule_New((void *) fsstream, NULL, NULL);
+    PyObject *value = PyCapsule_New((void *) fsevent_stream, NULL, NULL);
     PyDict_SetItem(streams, stream, value);
 
     /* Get runloop reference from observer info data or current */
@@ -209,19 +209,19 @@ pyfsevents_schedule(PyObject *self, PyObject *args, PyObject *kwargs)
         loop = (CFRunLoopRef) PyCapsule_GetPointer(value, NULL);
     }
 
-    FSEventStreamScheduleWithRunLoop(fsstream, loop, kCFRunLoopDefaultMode);
+    FSEventStreamScheduleWithRunLoop(fsevent_stream, loop, kCFRunLoopDefaultMode);
 
     /* Set stream info for callback */
     info->callback = callback;
-    info->stream = fsstream;
+    info->stream = fsevent_stream;
     info->loop = loop;
     info->state = PyThreadState_Get();
     Py_INCREF(callback);
 
     /* Start event streams */
-    if (!FSEventStreamStart(fsstream)) {
-        FSEventStreamInvalidate(fsstream);
-        FSEventStreamRelease(fsstream);
+    if (!FSEventStreamStart(fsevent_stream)) {
+        FSEventStreamInvalidate(fsevent_stream);
+        FSEventStreamRelease(fsevent_stream);
         PyErr_SetString(PyExc_ValueError,
                         "Could not start event stream.");
         return NULL;
@@ -236,17 +236,17 @@ pyfsevents_unschedule(PyObject *self, PyObject *stream)
     PyObject *value = PyDict_GetItem(streams, stream);
     PyDict_DelItem(streams, stream);
     if (PyCapsule_IsValid(value, NULL)) {
-        FSEventStreamRef fsstream = PyCapsule_GetPointer(value, NULL);
-        FSEventStreamStop(fsstream);
-        FSEventStreamInvalidate(fsstream);
-        FSEventStreamRelease(fsstream);
+        FSEventStreamRef fsevent_stream = PyCapsule_GetPointer(value, NULL);
+        FSEventStreamStop(fsevent_stream);
+        FSEventStreamInvalidate(fsevent_stream);
+        FSEventStreamRelease(fsevent_stream);
     }
 
     Py_RETURN_NONE;
 }
 
 static PyObject *
-pyfsevents_stop(PyObject* self, PyObject* thread)
+pyfsevents_stop(PyObject *self, PyObject *thread)
 {
     PyObject *value = PyDict_GetItem(loops, thread);
     if (PyCapsule_IsValid(value, NULL)) {
