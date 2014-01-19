@@ -56,7 +56,7 @@ _stream_handler(ConstFSEventStreamRef stream,
 {
     const char **paths = eventPaths;
     streamobject *object = info;
-    PyObject *result = NULL;
+    PyObject *result = NULL, *str = NULL, *num = NULL;
 
     assert(numEvents <= PY_SSIZE_T_MAX);
 
@@ -66,29 +66,29 @@ _stream_handler(ConstFSEventStreamRef stream,
     /* Convert event data to Python objects */
     PyObject *event_paths = PyList_New(numEvents);
     if (!event_paths) {
-    	goto final;
+        goto final;
     }
 
     PyObject *event_flags = PyList_New(numEvents);
     if (!event_flags) {
-    	goto final;
+        goto final;
     }
 
     for (size_t i = 0; i < numEvents; i++) {
-        PyObject *str = PyBytes_FromString(paths[i]);
-
+        str = PyBytes_FromString(paths[i]);
         #if PY_MAJOR_VERSION >= 3
-            PyObject *num = PyLong_FromLong(eventFlags[i]);
+            num = PyLong_FromLong(eventFlags[i]);
         #else
-            PyObject *num = PyInt_FromLong(eventFlags[i]);
+            num = PyInt_FromLong(eventFlags[i]);
         #endif
-
         if ((!num) || (!str)) {
             goto final;
         }
         PyList_SET_ITEM(event_paths, i, str);
         PyList_SET_ITEM(event_flags, i, num);
     }
+    str = NULL;
+    num = NULL;
 
     if ( (result = PyObject_CallFunctionObjArgs(
               object->callback, event_paths, event_flags, NULL)) == NULL) {
@@ -105,6 +105,8 @@ final:
         Py_XDECREF(event_paths);
         Py_XDECREF(event_flags);
     }
+    Py_XDECREF(str);
+    Py_XDECREF(num);
     Py_XDECREF(result);
     PyThreadState_Swap(thread_state);
     PyGILState_Release(gil_state);
