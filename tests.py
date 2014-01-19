@@ -35,14 +35,12 @@ class PathObservationTestCase(BaseTestCase):
             events.append(args)
 
         f, path = self._make_temporary()
-        from fsevents import Stream
-        stream = Stream(callback, path)
 
         from fsevents import Observer
-        observer = Observer()
-        observer.schedule(stream)
+        observer = Observer(callback, file_events=True)
         observer.start()
-
+        observer.schedule(path)
+ 
         # add single file
         import time
         while not observer.isAlive():
@@ -53,7 +51,6 @@ class PathObservationTestCase(BaseTestCase):
 
         # stop and join observer
         observer.stop()
-        observer.unschedule(stream)
         observer.join()
 
         self.assertEquals(events[0][0], path)
@@ -64,8 +61,7 @@ class PathObservationTestCase(BaseTestCase):
             events.append(args)
 
         from fsevents import Observer
-        observer = Observer()
-        from fsevents import Stream
+        observer = Observer(callback, file_events=True)
         observer.start()
 
         # wait until activation
@@ -84,8 +80,8 @@ class PathObservationTestCase(BaseTestCase):
         path2 = os.path.realpath(self._make_tempdir()) + '/'
         h = self._make_temporary(path2)[0]
 
-        stream = Stream(callback, path1, path2)
-        observer.schedule(stream)
+        observer.schedule(path1)
+        observer.schedule(path2)
 
         try:
             del events[:]
@@ -104,41 +100,9 @@ class PathObservationTestCase(BaseTestCase):
 
             # stop and join observer
             observer.stop()
-            observer.unschedule(stream)
+            observer.unschedule(path1)
+            observer.unschedule(path2)
             observer.join()
-
-    def test_single_file_added_multiple_streams(self):
-        events = []
-        def callback(*args):
-            events.append(args)
-
-        f, path = self._make_temporary()
-        from fsevents import Stream
-        stream1 = Stream(callback, path)
-        stream2 = Stream(callback, path)
-
-        from fsevents import Observer
-        observer = Observer()
-        observer.schedule(stream1)
-        observer.schedule(stream2)
-        observer.start()
-
-        # add single file
-        import time
-        while not observer.isAlive():
-            time.sleep(0.1)
-        time.sleep(0.1)
-        del events[:]
-        f.close()
-        time.sleep(0.2)
-
-        # stop and join observer
-        observer.stop()
-        observer.unschedule(stream1)
-        observer.unschedule(stream2)
-        observer.join()
-        self.assertEquals(events[0][0], path)
-        self.assertEquals(events[1][0], path)
 
     def test_single_file_added_with_observer_unscheduled(self):
         events = []
@@ -632,21 +596,21 @@ class FileObservationTestCase(BaseTestCase):
 
     def test_existing_directories_are_not_reported(self):
         import os
-        from fsevents import Stream, Observer
+        from fsevents import Observer
+        import time
 
         events = []
-        def callback(event):
-            events.append(event)
+        def callback(*args):
+            events.append(args)
 
-        stream = Stream(callback, self.tempdir, file_events=True)
         new1 = os.path.join(self.tempdir, "newdir1")
         new2 = os.path.join(self.tempdir, "newdir2")
         os.mkdir(new1)
-        observer = Observer()
-        observer.schedule(stream)
+        time.sleep(1.0)
+        observer = Observer(callback, file_events=True)
         observer.start()
-
-        import time
+        observer.schedule(self.tempdir)
+ 
         while not observer.isAlive():
             time.sleep(0.1)
         del events[:]
@@ -655,15 +619,15 @@ class FileObservationTestCase(BaseTestCase):
         try:
             time.sleep(1.1)
             observer.stop()
-            observer.unschedule(stream)
+            observer.unschedule(self.tempdir)
             observer.join()
 
-            from fsevents import IN_CREATE, IN_MODIFY
-            self.assertEquals(len(events), 2)
-            self.assertEquals(events[0].mask, IN_CREATE)
-            self.assertEquals(events[0].name, os.path.realpath(new2))
-            self.assertEquals(events[1].mask, IN_MODIFY)
-            self.assertEquals(events[1].name, os.path.realpath(new2))
+            from fsevents import FSE_CREATED_FLAG
+            from fsevents import FSE_ITEM_IS_DIR_FLAG
+            flags = FSE_CREATED_FLAG | FSE_ITEM_IS_DIR_FLAG
+            self.assertEquals(len(events), 1)
+            self.assertEquals(events[0][0], os.path.realpath(new2))
+            self.assertEquals(events[0][1], flags)
         finally:
             os.rmdir(new1)
             os.rmdir(new2)
