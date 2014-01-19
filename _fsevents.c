@@ -354,6 +354,10 @@ _pyfsevents_signal_reschedule(streamobject *self)
         return;
     }
 
+    if (self->action != STREAM_NONE) {
+    	return;
+    }
+
     self->action = STREAM_RESCHEDULE;
     CFRunLoopSourceSignal(self->signal_source);
     CFRunLoopWakeUp(self->loop);
