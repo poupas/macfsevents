@@ -23,9 +23,9 @@
 #endif
 
 
-#define STREAM_NONE			0
-#define STREAM_SHUTDOWN		1 << 0
-#define STREAM_RESCHEDULE	1 << 1
+#define STREAM_NONE        0
+#define STREAM_SHUTDOWN    1 << 0
+#define STREAM_RESCHEDULE  1 << 1
 
 
 const char callback_error_msg[] = "Unable to call callback function.";
@@ -54,13 +54,13 @@ _stream_handler(ConstFSEventStreamRef stream,
                 const FSEventStreamEventFlags eventFlags[],
                 const FSEventStreamEventId eventIds[])
 {
-	const char **paths = eventPaths;
-	streamobject *object = info;
-	PyObject *result = NULL;
+    const char **paths = eventPaths;
+    streamobject *object = info;
+    PyObject *result = NULL;
 
     assert(numEvents <= PY_SSIZE_T_MAX);
 
-	PyGILState_STATE gil_state = PyGILState_Ensure();
+    PyGILState_STATE gil_state = PyGILState_Ensure();
     PyThreadState *thread_state = PyThreadState_Swap(object->state);
 
     /* Convert event data to Python objects */
@@ -84,14 +84,14 @@ _stream_handler(ConstFSEventStreamRef stream,
         #endif
 
         if ((!num) || (!str)) {
-        	goto final;
+            goto final;
         }
         PyList_SET_ITEM(event_paths, i, str);
         PyList_SET_ITEM(event_flags, i, num);
     }
 
     if ( (result = PyObject_CallFunctionObjArgs(
-    		object->callback, event_paths, event_flags, NULL)) == NULL) {
+              object->callback, event_paths, event_flags, NULL)) == NULL) {
         /* May can return NULL if an exception is raised */
         if (!PyErr_Occurred())
             PyErr_SetString(PyExc_ValueError, callback_error_msg);
@@ -99,11 +99,12 @@ _stream_handler(ConstFSEventStreamRef stream,
         /* Stop listening */
         CFRunLoopStop(object->loop);
     }
+
 final:
-	if (!result) {
-		Py_XDECREF(event_paths);
-		Py_XDECREF(event_flags);
-	}
+    if (!result) {
+        Py_XDECREF(event_paths);
+        Py_XDECREF(event_flags);
+    }
     Py_XDECREF(result);
     PyThreadState_Swap(thread_state);
     PyGILState_Release(gil_state);
@@ -166,7 +167,7 @@ _pyfsevents_create_stream(streamobject *self, CFArrayRef paths)
 static int
 _pyfsevents_reschedule_stream(streamobject *self)
 {
-	CFMutableArrayRef cf_paths = NULL;
+    CFMutableArrayRef cf_paths = NULL;
     CFStringRef cf_path = NULL;
     PyObject *path = NULL;
     PyObject *_ = NULL;
@@ -189,8 +190,8 @@ _pyfsevents_reschedule_stream(streamobject *self)
 
     while (PyDict_Next(self->paths, &pos, &path, &_)) {
     	cf_path = CFStringCreateWithCString(kCFAllocatorDefault,
-        								  PyBytes_AsString(path),
-                                          kCFStringEncodingUTF8);
+                                            PyBytes_AsString(path),
+                                            kCFStringEncodingUTF8);
     	if (cf_path == NULL) {
             goto final;
         }
@@ -201,9 +202,9 @@ _pyfsevents_reschedule_stream(streamobject *self)
     err = _pyfsevents_create_stream(self, cf_paths);
 
 final:
-	if (cf_paths != NULL) {
-		CFRelease(cf_paths);
-  	}
+    if (cf_paths != NULL) {
+        CFRelease(cf_paths);
+    }
 
     return err;
 }
@@ -213,9 +214,9 @@ static void
 _signal_handler(void *info)
 {
     int err = -1;
-	streamobject *object = info;
+    streamobject *object = info;
 
-	PyGILState_STATE gil_state = PyGILState_Ensure();
+    PyGILState_STATE gil_state = PyGILState_Ensure();
     PyThreadState *thread_state = PyThreadState_Swap(object->state);
 
     if (object->action & STREAM_SHUTDOWN) {
@@ -240,10 +241,10 @@ static void
 streamobject_dealloc(streamobject *self)
 {
     // Free state?
-	if (self->paths) {
-		Py_DECREF(self->paths);
-		self->paths = NULL;
-	}
+    if (self->paths) {
+        Py_DECREF(self->paths);
+        self->paths = NULL;
+    }
     if (self->callback) {
         Py_DECREF(self->callback);
         self->callback = NULL;
@@ -360,11 +361,11 @@ _pyfsevents_signal_reschedule(streamobject *self)
 static PyObject *
 streamobject_schedule(streamobject *self, PyObject *path)
 {
-	/* PyDict_SetItem creates new references */
-	if (PyDict_SetItem(self->paths, path, Py_None)) {
-		return NULL;
-	}
-	_pyfsevents_signal_reschedule(self);
+    /* PyDict_SetItem creates new references */
+    if (PyDict_SetItem(self->paths, path, Py_None)) {
+        return NULL;
+    }
+    _pyfsevents_signal_reschedule(self);
     Py_RETURN_NONE;
 }
 
@@ -372,17 +373,17 @@ streamobject_schedule(streamobject *self, PyObject *path)
 static PyObject *
 streamobject_unschedule(streamobject *self, PyObject *path)
 {
-	int result;
-
-	result = PyDict_Contains(self->paths, path);
-	if (result == -1) {
-		return NULL;
-	} else if (result == 1) {
-		if (PyDict_DelItem(self->paths, path) == -1) {
-			return NULL;
-		}
-		_pyfsevents_signal_reschedule(self);
-	}
+    int result;
+	
+    result = PyDict_Contains(self->paths, path);
+    if (result == -1) {
+        return NULL;
+    } else if (result == 1) {
+        if (PyDict_DelItem(self->paths, path) == -1) {
+            return NULL;
+        }
+        _pyfsevents_signal_reschedule(self);
+    }
     Py_RETURN_NONE;
 }
 
