@@ -53,7 +53,7 @@ class Observer(threading.Thread):
 
     def stop(self):
         with self.lock:
-            _fsevents.stop(self)
+            self.stream.stop()
 
     def _callback(self, paths, masks):
         for path, mask in izip(paths, masks):
