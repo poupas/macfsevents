@@ -221,7 +221,6 @@ _signal_handler(void *info)
 
     if (object->action & STREAM_SHUTDOWN) {
         CFRunLoopStop(object->loop);
-        object->loop = NULL;
         goto final;
     }
 
@@ -325,6 +324,9 @@ streamobject_loop(streamobject *self, PyObject *args)
     CFRunLoopRemoveSource(self->loop,
                           self->signal_source,
                           kCFRunLoopDefaultMode);
+    _pyfsevents_destroy_stream(self);
+
+    self->loop = NULL;
 
     Py_RETURN_NONE;
 }
