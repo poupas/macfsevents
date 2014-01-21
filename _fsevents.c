@@ -228,7 +228,6 @@ _signal_handler(void *info)
         err = _pyfsevents_reschedule_stream(object);
     }
 
-final:
     object->action = STREAM_NONE;
     PyThreadState_Swap(thread_state);
     PyGILState_Release(gil_state);
