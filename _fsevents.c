@@ -185,7 +185,7 @@ _pyfsevents_reschedule_stream(streamobject *self)
     }
 
     cf_paths = CFArrayCreateMutable(kCFAllocatorDefault, 1,
-    		&kCFTypeArrayCallBacks);
+            &kCFTypeArrayCallBacks);
     if (cf_paths == NULL) {
     	goto final;
     }
@@ -223,10 +223,7 @@ _signal_handler(void *info)
 
     if (object->action & STREAM_SHUTDOWN) {
         CFRunLoopStop(object->loop);
-        goto final;
-    }
-
-    if (object->action & STREAM_RESCHEDULE) {
+    } else if (object->action & STREAM_RESCHEDULE) {
         /* Refresh event stream */ 
         err = _pyfsevents_reschedule_stream(object);
     }
