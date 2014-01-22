@@ -185,7 +185,7 @@ _pyfsevents_reschedule_stream(streamobject *self)
     }
 
     cf_paths = CFArrayCreateMutable(kCFAllocatorDefault, 1,
-            &kCFTypeArrayCallBacks);
+                                    &kCFTypeArrayCallBacks);
     if (cf_paths == NULL) {
     	goto final;
     }
@@ -237,23 +237,20 @@ _signal_handler(void *info)
 static void
 streamobject_dealloc(streamobject *self)
 {
-    // Free state?
-    if (self->paths) {
-        Py_DECREF(self->paths);
-        self->paths = NULL;
-    }
-    if (self->callback) {
-        Py_DECREF(self->callback);
-        self->callback = NULL;
-    }
-
     _pyfsevents_destroy_stream(self);
     if (self->signal_source) {
         CFRelease(self->signal_source);
         self->signal_source = NULL;
     }
-}
 
+    /* "paths" dictionary is used to store internal strings only.
+     * Cyclic garbage collection support not required.
+     */
+    Py_CLEAR(self->paths);
+    Py_CLEAR(self->callback);
+
+    PyObject_Del(self);
+}
 
 static PyObject *
 pyfsevents_streamobject(PyObject *selfptr, PyObject *args, PyObject *kwargs)
@@ -280,26 +277,25 @@ pyfsevents_streamobject(PyObject *selfptr, PyObject *args, PyObject *kwargs)
     self->callback = callback;
     Py_INCREF(self->callback);
 
-    self->latency = latency;
-
     self->flags = kFSEventStreamCreateFlagNoDefer;
     if (file_events) {
         self->flags |= kFSEventStreamCreateFlagFileEvents;
     }
+
+    self->latency = latency;
+    self->loop = NULL;
+    self->stream = NULL;
+    self->action = STREAM_NONE;
+    self->paths = PyDict_New();
 
     memset(&ctx, 0, sizeof(ctx));
     ctx.info = self;
     ctx.perform = _signal_handler;
     self->signal_source = CFRunLoopSourceCreate(NULL, 0, &ctx);
     if (self->signal_source == NULL) {
-        // XXX: cleanups
+        streamobject_dealloc(self);
         return NULL;
     }
-
-    self->loop = NULL;
-    self->stream = NULL;
-    self->action = STREAM_NONE;
-    self->paths = PyDict_New();
 
     return (PyObject *) self;
 }
@@ -418,7 +414,7 @@ streamobject_getattr(streamobject *self, char *name)
 
 static PyTypeObject PyFSEventStreamType = {
     PyVarObject_HEAD_INIT(0, 0)
-        "_fsevents.FSEventStream",
+    "_fsevents.FSEventStream",
     sizeof(streamobject),
     0,
     (destructor) streamobject_dealloc,   /*tp_dealloc */
