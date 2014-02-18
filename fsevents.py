@@ -38,17 +38,22 @@ class Observer(threading.Thread):
         self.lock = threading.Lock()
         threading.Thread.__init__(self)
         self.daemon = True
+        self.running = threading.Event()
 
     def run(self):
         # start CF loop
+        self.stream.initialize()
+        self.running.set()
         self.stream.loop()
 
     def schedule(self, path):
         with self.lock:
+            self.running.wait()
             self.stream.schedule(path)
 
     def unschedule(self, path):
         with self.lock:
+            self.running.wait()
             self.stream.unschedule(path)
 
     def stop(self):

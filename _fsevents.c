@@ -302,9 +302,17 @@ pyfsevents_streamobject(PyObject *selfptr, PyObject *args, PyObject *kwargs)
 
 
 static PyObject *
-streamobject_loop(streamobject *self, PyObject *args)
+streamobject_initialize(streamobject *self, PyObject *args)
 {
     self->loop = CFRunLoopGetCurrent();
+
+    Py_RETURN_NONE;
+}
+
+
+static PyObject *
+streamobject_loop(streamobject *self, PyObject *args)
+{
     CFRunLoopAddSource(self->loop,
                        self->signal_source,
                        kCFRunLoopDefaultMode);
@@ -389,6 +397,7 @@ streamobject_unschedule(streamobject *self, PyObject *path)
 
 
 static PyMethodDef streamobject_methods[] = {
+    {"initialize", (PyCFunction) streamobject_initialize, METH_NOARGS, NULL},
     {"loop", (PyCFunction) streamobject_loop, METH_NOARGS, NULL},
     {"schedule", (PyCFunction) streamobject_schedule, METH_O, NULL},
     {"unschedule", (PyCFunction) streamobject_unschedule, METH_O, NULL},
