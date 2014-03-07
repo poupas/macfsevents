@@ -101,10 +101,8 @@ _stream_handler(ConstFSEventStreamRef stream,
     }
 
 final:
-    if (!result) {
-        Py_XDECREF(event_paths);
-        Py_XDECREF(event_flags);
-    }
+    Py_XDECREF(event_paths);
+    Py_XDECREF(event_flags);
     Py_XDECREF(str);
     Py_XDECREF(num);
     Py_XDECREF(result);
