@@ -1,14 +1,12 @@
 import os
 
-from ez_setup import use_setuptools
-use_setuptools()
-
 from setuptools.extension import Extension
 from setuptools.command.build_ext import build_ext
 from setuptools import setup
 
 def read(fname):
-    return open(os.path.join(os.path.dirname(__file__), fname)).read()
+    with open(os.path.join(os.path.dirname(__file__), fname)) as f:
+        return f.read()
 
 ext_modules = [
     Extension(name = '_fsevents',
@@ -19,26 +17,31 @@ ext_modules = [
     ]
 
 setup(name = "MacFSEvents",
-      version = "0.2.8",
-      description = "Fork of MacFSEvents, a thread-based interface to file system observation primitives.",
+      version = "0.9-dev",
+      description = "Thread-based interface to file system observation primitives.",
       long_description = "\n\n".join((read('README.rst'), read('CHANGES.rst'))),
       license = "BSD",
-      author = "Malthe Borch",
-      author_email = "mborch@gmail.com",
+      data_files = [("", ["LICENSE.txt"])],
+      author = "Joao Poupino",
+      url = 'https://github.com/poupas/macfsevents',
       cmdclass = dict(build_ext=build_ext),
       ext_modules = ext_modules,
-      platforms = ["Mac OS X"],
+      platforms = ["macOS"],
       classifiers = [
         'Development Status :: 4 - Beta',
         'Intended Audience :: Developers',
-        'License :: OSI Approved :: MIT License',
+        'License :: OSI Approved :: BSD License',
         'Operating System :: MacOS :: MacOS X',
         'Programming Language :: C',
+        'Programming Language :: Python :: 2.4',
+        'Programming Language :: Python :: 2.5',
+        'Programming Language :: Python :: 2.6',
         'Programming Language :: Python :: 2.7',
+        'Programming Language :: Python :: 3.2',
+        'Programming Language :: Python :: 3.3',
         'Topic :: Software Development :: Libraries :: Python Modules',
         'Topic :: System :: Filesystems',
       ],
       zip_safe=False,
-      test_suite="tests",
       py_modules=['fsevents'],
      )
