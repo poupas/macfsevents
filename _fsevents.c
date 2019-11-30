@@ -26,20 +26,20 @@
 #define STREAM_SHUTDOWN    1 << 0
 #define STREAM_RESCHEDULE  1 << 1
 
-const char      callback_error_msg[] = "Unable to call callback function.";
+const char callback_error_msg[] = "Unable to call callback function.";
 
 static PyTypeObject PyFSEventStreamType;
 
 typedef struct {
     PyObject_HEAD PyObject *callback;
-    PyObject       *paths;
-    PyThreadState  *state;
+    PyObject *paths;
+    PyThreadState *state;
     FSEventStreamRef stream;
     FSEventStreamCreateFlags flags;
-    CFAbsoluteTime  latency;
-    CFRunLoopRef    loop;
+    CFAbsoluteTime latency;
+    CFRunLoopRef loop;
     CFRunLoopSourceRef signal_source;
-    unsigned int    action;
+    unsigned int action;
 } streamobject;
 
 
@@ -51,22 +51,17 @@ _stream_handler(ConstFSEventStreamRef stream,
 		const FSEventStreamEventFlags eventFlags[],
 		const FSEventStreamEventId eventIds[])
 {
-    const char    **paths = eventPaths;
-    streamobject   *object = info;
-    PyObject       *result = NULL,
-	*str = NULL,
-	*num = NULL;
-    PyObject       *event_paths = NULL,
-	*event_flags = NULL;
+    const char **paths = eventPaths;
+    streamobject *object = info;
+    PyObject *result = NULL, *str = NULL, *num = NULL;
+    PyObject *event_paths = NULL, *event_flags = NULL;
 
     assert(numEvents <= PY_SSIZE_T_MAX);
 
     PyGILState_STATE gil_state = PyGILState_Ensure();
-    PyThreadState  *thread_state = PyThreadState_Swap(object->state);
+    PyThreadState *thread_state = PyThreadState_Swap(object->state);
 
-    /*
-     * Convert event data to Python objects 
-     */
+    /* Convert event data to Python objects */
     event_paths = PyList_New(numEvents);
     if (!event_paths) {
 	goto final;
@@ -95,15 +90,8 @@ _stream_handler(ConstFSEventStreamRef stream,
     if ((result =
 	 PyObject_CallFunctionObjArgs(object->callback, event_paths,
 				      event_flags, NULL)) == NULL) {
-	/*
-	 * May return NULL if an exception is raised 
-	 */
 	if (!PyErr_Occurred())
 	    PyErr_SetString(PyExc_ValueError, callback_error_msg);
-
-	/*
-	 * Stop listening 
-	 */
 	CFRunLoopStop(object->loop);
     }
 
@@ -139,9 +127,7 @@ _pyfsevents_create_stream(streamobject * self, CFArrayRef paths)
     FSEventStreamContext ctx;
     FSEventStreamRef ref;
 
-    /*
-     * Initialize context 
-     */
+    /* Initialize context */
     ctx.version = 0;
     ctx.info = self;
     ctx.retain = NULL;
@@ -173,17 +159,13 @@ static int
 _pyfsevents_reschedule_stream(streamobject * self)
 {
     CFMutableArrayRef cf_paths = NULL;
-    CFStringRef     cf_path = NULL;
-    PyObject       *path = NULL;
-    PyObject       *_ = NULL;
-    Py_ssize_t      i = 0,
-	pos = 0,
-	path_count = 0;
-    int             err = -1;
+    CFStringRef cf_path = NULL;
+    PyObject *path = NULL;
+    PyObject *_ = NULL;
+    Py_ssize_t i = 0, pos = 0, path_count = 0;
+    int err = -1;
 
-    /*
-     * Destroy previous event stream 
-     */
+    /* Destroy previous event stream */
     _pyfsevents_destroy_stream(self);
 
     path_count = PyDict_Size(self->paths);
@@ -222,18 +204,16 @@ _pyfsevents_reschedule_stream(streamobject * self)
 static void
 _signal_handler(void *info)
 {
-    int             err = -1;
-    streamobject   *object = info;
+    int err = -1;
+    streamobject *object = info;
 
     PyGILState_STATE gil_state = PyGILState_Ensure();
-    PyThreadState  *thread_state = PyThreadState_Swap(object->state);
+    PyThreadState *thread_state = PyThreadState_Swap(object->state);
 
     if (object->action & STREAM_SHUTDOWN) {
 	CFRunLoopStop(object->loop);
     } else if (object->action & STREAM_RESCHEDULE) {
-	/*
-	 * Refresh event stream 
-	 */
+	 /* Refresh event stream */
 	err = _pyfsevents_reschedule_stream(object);
     }
 
@@ -253,7 +233,7 @@ streamobject_dealloc(streamobject * self)
     }
 
     /*
-     * "paths" dictionary is used to store internal strings only. Cyclic
+     * "paths" is a dictionary used to store internal strings only. Cyclic
      * garbage collection support not required. 
      */
     Py_CLEAR(self->paths);
@@ -266,14 +246,13 @@ static PyObject *
 pyfsevents_streamobject(PyObject * selfptr, PyObject * args,
 			PyObject * kwargs)
 {
-    streamobject   *self;
-    PyObject       *callback;
+    streamobject *self;
+    PyObject *callback;
     CFRunLoopSourceContext ctx;
-    CFAbsoluteTime  latency = 0.01;
-    int             file_events = 0;
+    CFAbsoluteTime latency = 0.01;
+    int file_events = 0;
 
-    static char    *kwlist[] =
-	{ "callback", "file_events", "latency", NULL };
+    static char *kwlist[] = { "callback", "file_events", "latency", NULL };
 
     if (!PyArg_ParseTupleAndKeywords
 	(args, kwargs, "O|id:streamobject", kwlist, &callback,
@@ -330,9 +309,7 @@ streamobject_loop(streamobject * self, PyObject * args)
 		       kCFRunLoopDefaultMode);
 
     self->state = PyThreadState_Get();
-    /*
-     * No timeout, block until events 
-     */
+    /* No timeout, block until events are available */
     Py_BEGIN_ALLOW_THREADS CFRunLoopRun();
     Py_END_ALLOW_THREADS
 	CFRunLoopRemoveSource(self->loop,
@@ -394,7 +371,7 @@ streamobject_schedule(streamobject * self, PyObject * path)
 static PyObject *
 streamobject_unschedule(streamobject * self, PyObject * path)
 {
-    int             result;
+    int result;
 
     result = PyDict_Contains(self->paths, path);
     if (result == -1) {
@@ -472,11 +449,11 @@ static PyTypeObject PyFSEventStreamType = {
     0,				/* tp_getset */
 };
 
-static char     doc[] = "Low-level FSEvent interface.";
+static char doc[] = "Low-level FSEvent interface.";
 
 MOD_INIT(_fsevents)
 {
-    PyObject       *mod;
+    PyObject *mod;
 
     MOD_DEF(mod, "_fsevents", doc, methods) if (mod == NULL)
 	return MOD_ERROR_VAL;
